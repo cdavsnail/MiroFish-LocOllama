@@ -691,8 +691,14 @@ def fetch_new_actions_from_db(
             ORDER BY rowid ASC
         """, (last_rowid,))
         
-        for rowid, user_id, action, info_json in cursor.fetchall():
-            # 更新最大 rowid
+        rows = cursor.fetchall()
+
+        # 预处理：批量获取所有 FOLLOW 动作需要的 user name 以避免 N+1 查询
+        follow_ids = set()
+        parsed_rows = []
+
+        for rowid, user_id, action, info_json in rows:
+            # 更新最大 rowid (必须在循环最开始更新，确保遇到过滤动作时不漏掉进度)
             new_last_rowid = rowid
             
             # 过滤非核心动作
@@ -729,8 +735,41 @@ def fetch_new_actions_from_db(
             # 转换动作类型名称
             action_type = ACTION_TYPE_MAP.get(action, action.upper())
             
+            if action_type == 'FOLLOW' and 'follow_id' in simplified_args:
+                follow_ids.add(simplified_args['follow_id'])
+
+            parsed_rows.append((rowid, user_id, action_type, simplified_args))
+
+        # 批量查询 follow_id 对应的用户信息
+        follow_cache = {}
+        if follow_ids:
+            follow_id_list = list(follow_ids)
+            batch_size = 900  # SQLite limits variables in IN clause to 999 by default
+            for i in range(0, len(follow_id_list), batch_size):
+                batch = follow_id_list[i:i+batch_size]
+                placeholders = ','.join(['?'] * len(batch))
+
+                cursor.execute(f"""
+                    SELECT f.follow_id, u.agent_id, u.name, u.user_name
+                    FROM follow f
+                    LEFT JOIN user u ON f.followee_id = u.user_id
+                    WHERE f.follow_id IN ({placeholders})
+                """, batch)
+
+                for f_id, agent_id, name, user_name in cursor.fetchall():
+                    target_name = None
+                    if agent_id is not None and agent_id in agent_names:
+                        target_name = agent_names[agent_id]
+                    else:
+                        target_name = name or user_name or ''
+
+                    if target_name:
+                        follow_cache[f_id] = target_name
+
+        for rowid, user_id, action_type, simplified_args in parsed_rows:
+
             # 补充上下文信息（帖子内容、用户名等）
-            _enrich_action_context(cursor, action_type, simplified_args, agent_names)
+            _enrich_action_context(cursor, action_type, simplified_args, agent_names, follow_cache)
             
             actions.append({
                 'agent_id': user_id,
@@ -750,7 +789,8 @@ def _enrich_action_context(
     cursor,
     action_type: str,
     action_args: Dict[str, Any],
-    agent_names: Dict[int, str]
+    agent_names: Dict[int, str],
+    follow_cache: Dict[int, str] = None
 ) -> None:
     """
     为动作补充上下文信息（帖子内容、用户名等）
@@ -760,6 +800,7 @@ def _enrich_action_context(
         action_type: 动作类型
         action_args: 动作参数（会被修改）
         agent_names: agent_id -> agent_name 映射
+        follow_cache: 可选，预先查询的 follow_id -> target_user_name 映射字典
     """
     try:
         # 点赞/踩帖子：补充帖子内容和作者
@@ -811,16 +852,19 @@ def _enrich_action_context(
         elif action_type == 'FOLLOW':
             follow_id = action_args.get('follow_id')
             if follow_id:
-                # 从 follow 表获取 followee_id
-                cursor.execute("""
-                    SELECT followee_id FROM follow WHERE follow_id = ?
-                """, (follow_id,))
-                row = cursor.fetchone()
-                if row:
-                    followee_id = row[0]
-                    target_name = _get_user_name(cursor, followee_id, agent_names)
-                    if target_name:
-                        action_args['target_user_name'] = target_name
+                if follow_cache is not None and follow_id in follow_cache:
+                    action_args['target_user_name'] = follow_cache[follow_id]
+                else:
+                    # 如果缓存中没有，仍然回退到从 follow 表获取 followee_id
+                    cursor.execute("""
+                        SELECT followee_id FROM follow WHERE follow_id = ?
+                    """, (follow_id,))
+                    row = cursor.fetchone()
+                    if row:
+                        followee_id = row[0]
+                        target_name = _get_user_name(cursor, followee_id, agent_names)
+                        if target_name:
+                            action_args['target_user_name'] = target_name
         
         # 屏蔽用户：补充被屏蔽用户的名称
         elif action_type == 'MUTE':
