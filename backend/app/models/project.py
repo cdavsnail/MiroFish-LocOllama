@@ -8,6 +8,7 @@ import json
 import uuid
 import shutil
 from datetime import datetime
+from werkzeug.utils import secure_filename
 from typing import Dict, Any, List, Optional
 from enum import Enum
 from dataclasses import dataclass, field, asdict
@@ -254,7 +255,7 @@ class ProjectManager:
         os.makedirs(files_dir, exist_ok=True)
         
         # 生成安全的文件名
-        ext = os.path.splitext(original_filename)[1].lower()
+        ext = os.path.splitext(secure_filename(original_filename))[1].lower()
         safe_filename = f"{uuid.uuid4().hex[:8]}{ext}"
         file_path = os.path.join(files_dir, safe_filename)
         
