@@ -682,8 +682,7 @@ def fetch_new_actions_from_db(
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # 使用 rowid 来追踪已处理的记录（rowid 是 SQLite 的内置自增字段）
-        # 这样可以避免 created_at 格式差异问题（Twitter 用整数，Reddit 用日期时间字符串）
+        # 使用 rowid 来追踪已处理的记录
         cursor.execute("""
             SELECT rowid, user_id, action, info
             FROM trace
@@ -691,46 +690,215 @@ def fetch_new_actions_from_db(
             ORDER BY rowid ASC
         """, (last_rowid,))
         
-        for rowid, user_id, action, info_json in cursor.fetchall():
-            # 更新最大 rowid
+        raw_actions = cursor.fetchall()
+
+        if not raw_actions:
+            conn.close()
+            return actions, new_last_rowid
+
+        # 预先收集需要查询的ID
+        post_ids_to_fetch = set()
+        comment_ids_to_fetch = set()
+        user_ids_to_fetch = set()
+        follow_ids_to_fetch = set()
+        new_post_ids_for_repost = set()
+
+        parsed_actions = []
+
+        for rowid, user_id, action, info_json in raw_actions:
             new_last_rowid = rowid
             
-            # 过滤非核心动作
             if action in FILTERED_ACTIONS:
                 continue
-            
-            # 解析动作参数
+
             try:
                 action_args = json.loads(info_json) if info_json else {}
             except json.JSONDecodeError:
                 action_args = {}
-            
-            # 精简 action_args，只保留关键字段（保留完整内容，不截断）
-            simplified_args = {}
-            if 'content' in action_args:
-                simplified_args['content'] = action_args['content']
-            if 'post_id' in action_args:
-                simplified_args['post_id'] = action_args['post_id']
-            if 'comment_id' in action_args:
-                simplified_args['comment_id'] = action_args['comment_id']
-            if 'quoted_id' in action_args:
-                simplified_args['quoted_id'] = action_args['quoted_id']
-            if 'new_post_id' in action_args:
-                simplified_args['new_post_id'] = action_args['new_post_id']
-            if 'follow_id' in action_args:
-                simplified_args['follow_id'] = action_args['follow_id']
-            if 'query' in action_args:
-                simplified_args['query'] = action_args['query']
-            if 'like_id' in action_args:
-                simplified_args['like_id'] = action_args['like_id']
-            if 'dislike_id' in action_args:
-                simplified_args['dislike_id'] = action_args['dislike_id']
-            
-            # 转换动作类型名称
+
             action_type = ACTION_TYPE_MAP.get(action, action.upper())
             
-            # 补充上下文信息（帖子内容、用户名等）
-            _enrich_action_context(cursor, action_type, simplified_args, agent_names)
+            if action_type in ('LIKE_POST', 'DISLIKE_POST', 'CREATE_COMMENT'):
+                if 'post_id' in action_args:
+                    post_ids_to_fetch.add(action_args['post_id'])
+            elif action_type == 'REPOST':
+                if 'new_post_id' in action_args:
+                    new_post_ids_for_repost.add(action_args['new_post_id'])
+            elif action_type == 'QUOTE_POST':
+                if 'quoted_id' in action_args:
+                    post_ids_to_fetch.add(action_args['quoted_id'])
+                if 'new_post_id' in action_args:
+                    new_post_ids_for_repost.add(action_args['new_post_id'])
+            elif action_type == 'FOLLOW':
+                if 'follow_id' in action_args:
+                    follow_ids_to_fetch.add(action_args['follow_id'])
+            elif action_type == 'MUTE':
+                target_id = action_args.get('user_id') or action_args.get('target_id')
+                if target_id:
+                    user_ids_to_fetch.add(target_id)
+            elif action_type in ('LIKE_COMMENT', 'DISLIKE_COMMENT'):
+                if 'comment_id' in action_args:
+                    comment_ids_to_fetch.add(action_args['comment_id'])
+
+            parsed_actions.append((user_id, action_type, action_args))
+            
+        # 批量查询并缓存结果
+        post_cache = {}
+        original_post_cache = {}
+        quote_content_cache = {}
+        user_cache = {}
+        comment_cache = {}
+        follow_cache = {}
+
+        def chunker(seq, size):
+            return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+            
+        if post_ids_to_fetch:
+            for chunk in chunker(list(post_ids_to_fetch), 900):
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT p.post_id, p.content, p.user_id, u.agent_id, u.name, u.user_name
+                    FROM post p
+                    LEFT JOIN user u ON p.user_id = u.user_id
+                    WHERE p.post_id IN ({placeholders})
+                """, chunk)
+                for pid, content, uid, aid, name, uname in cursor.fetchall():
+                    author_name = ''
+                    if aid is not None and aid in agent_names:
+                        author_name = agent_names[aid]
+                    else:
+                        author_name = name or uname or ''
+                    post_cache[pid] = {'content': content or '', 'author_name': author_name}
+
+        if new_post_ids_for_repost:
+            original_post_ids_to_fetch = set()
+            for chunk in chunker(list(new_post_ids_for_repost), 900):
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT post_id, original_post_id, quote_content
+                    FROM post
+                    WHERE post_id IN ({placeholders})
+                """, chunk)
+                for pid, opid, qcontent in cursor.fetchall():
+                    if opid:
+                        original_post_ids_to_fetch.add(opid)
+                        original_post_cache[pid] = opid
+                    if qcontent:
+                        quote_content_cache[pid] = qcontent
+
+            for chunk in chunker(list(original_post_ids_to_fetch), 900):
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT p.post_id, p.content, p.user_id, u.agent_id, u.name, u.user_name
+                    FROM post p
+                    LEFT JOIN user u ON p.user_id = u.user_id
+                    WHERE p.post_id IN ({placeholders})
+                """, chunk)
+                for pid, content, uid, aid, name, uname in cursor.fetchall():
+                    author_name = ''
+                    if aid is not None and aid in agent_names:
+                        author_name = agent_names[aid]
+                    else:
+                        author_name = name or uname or ''
+                    post_cache[pid] = {'content': content or '', 'author_name': author_name}
+
+        if comment_ids_to_fetch:
+            for chunk in chunker(list(comment_ids_to_fetch), 900):
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT c.comment_id, c.content, c.user_id, u.agent_id, u.name, u.user_name
+                    FROM comment c
+                    LEFT JOIN user u ON c.user_id = u.user_id
+                    WHERE c.comment_id IN ({placeholders})
+                """, chunk)
+                for cid, content, uid, aid, name, uname in cursor.fetchall():
+                    author_name = ''
+                    if aid is not None and aid in agent_names:
+                        author_name = agent_names[aid]
+                    else:
+                        author_name = name or uname or ''
+                    comment_cache[cid] = {'content': content or '', 'author_name': author_name}
+
+        if follow_ids_to_fetch:
+            followees_to_fetch = set()
+            for chunk in chunker(list(follow_ids_to_fetch), 900):
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT follow_id, followee_id
+                    FROM follow
+                    WHERE follow_id IN ({placeholders})
+                """, chunk)
+                for fid, fee_id in cursor.fetchall():
+                    if fee_id:
+                        followees_to_fetch.add(fee_id)
+                        follow_cache[fid] = fee_id
+            user_ids_to_fetch.update(followees_to_fetch)
+
+        if user_ids_to_fetch:
+            for chunk in chunker(list(user_ids_to_fetch), 900):
+                placeholders = ','.join(['?'] * len(chunk))
+                cursor.execute(f"""
+                    SELECT user_id, agent_id, name, user_name
+                    FROM user
+                    WHERE user_id IN ({placeholders})
+                """, chunk)
+                for uid, aid, name, uname in cursor.fetchall():
+                    author_name = ''
+                    if aid is not None and aid in agent_names:
+                        author_name = agent_names[aid]
+                    else:
+                        author_name = name or uname or ''
+                    user_cache[uid] = author_name
+
+        # 构建最终的 actions 列表
+        for user_id, action_type, action_args in parsed_actions:
+            simplified_args = {}
+            for k in ['content', 'post_id', 'comment_id', 'quoted_id', 'new_post_id', 'follow_id', 'query', 'like_id', 'dislike_id']:
+                if k in action_args:
+                    simplified_args[k] = action_args[k]
+
+            if action_type in ('LIKE_POST', 'DISLIKE_POST', 'CREATE_COMMENT'):
+                post_id = simplified_args.get('post_id')
+                if post_id and post_id in post_cache:
+                    simplified_args['post_content'] = post_cache[post_id]['content']
+                    simplified_args['post_author_name'] = post_cache[post_id]['author_name']
+
+            elif action_type == 'REPOST':
+                new_post_id = simplified_args.get('new_post_id')
+                if new_post_id and new_post_id in original_post_cache:
+                    original_post_id = original_post_cache[new_post_id]
+                    if original_post_id in post_cache:
+                        simplified_args['original_content'] = post_cache[original_post_id]['content']
+                        simplified_args['original_author_name'] = post_cache[original_post_id]['author_name']
+
+            elif action_type == 'QUOTE_POST':
+                quoted_id = simplified_args.get('quoted_id')
+                new_post_id = simplified_args.get('new_post_id')
+
+                if quoted_id and quoted_id in post_cache:
+                    simplified_args['original_content'] = post_cache[quoted_id]['content']
+                    simplified_args['original_author_name'] = post_cache[quoted_id]['author_name']
+
+                if new_post_id and new_post_id in quote_content_cache:
+                    simplified_args['quote_content'] = quote_content_cache[new_post_id]
+
+            elif action_type == 'FOLLOW':
+                follow_id = simplified_args.get('follow_id')
+                if follow_id and follow_id in follow_cache:
+                    followee_id = follow_cache[follow_id]
+                    if followee_id in user_cache:
+                        simplified_args['target_user_name'] = user_cache[followee_id]
+
+            elif action_type == 'MUTE':
+                target_id = simplified_args.get('user_id') or action_args.get('target_id')
+                if target_id and target_id in user_cache:
+                    simplified_args['target_user_name'] = user_cache[target_id]
+
+            elif action_type in ('LIKE_COMMENT', 'DISLIKE_COMMENT'):
+                comment_id = simplified_args.get('comment_id')
+                if comment_id and comment_id in comment_cache:
+                    simplified_args['comment_content'] = comment_cache[comment_id]['content']
+                    simplified_args['comment_author_name'] = comment_cache[comment_id]['author_name']
             
             actions.append({
                 'agent_id': user_id,
@@ -738,247 +906,12 @@ def fetch_new_actions_from_db(
                 'action_type': action_type,
                 'action_args': simplified_args,
             })
-        
+
         conn.close()
     except Exception as e:
         print(f"读取数据库动作失败: {e}")
     
     return actions, new_last_rowid
-
-
-def _enrich_action_context(
-    cursor,
-    action_type: str,
-    action_args: Dict[str, Any],
-    agent_names: Dict[int, str]
-) -> None:
-    """
-    为动作补充上下文信息（帖子内容、用户名等）
-    
-    Args:
-        cursor: 数据库游标
-        action_type: 动作类型
-        action_args: 动作参数（会被修改）
-        agent_names: agent_id -> agent_name 映射
-    """
-    try:
-        # 点赞/踩帖子：补充帖子内容和作者
-        if action_type in ('LIKE_POST', 'DISLIKE_POST'):
-            post_id = action_args.get('post_id')
-            if post_id:
-                post_info = _get_post_info(cursor, post_id, agent_names)
-                if post_info:
-                    action_args['post_content'] = post_info.get('content', '')
-                    action_args['post_author_name'] = post_info.get('author_name', '')
-        
-        # 转发帖子：补充原帖内容和作者
-        elif action_type == 'REPOST':
-            new_post_id = action_args.get('new_post_id')
-            if new_post_id:
-                # 转发帖子的 original_post_id 指向原帖
-                cursor.execute("""
-                    SELECT original_post_id FROM post WHERE post_id = ?
-                """, (new_post_id,))
-                row = cursor.fetchone()
-                if row and row[0]:
-                    original_post_id = row[0]
-                    original_info = _get_post_info(cursor, original_post_id, agent_names)
-                    if original_info:
-                        action_args['original_content'] = original_info.get('content', '')
-                        action_args['original_author_name'] = original_info.get('author_name', '')
-        
-        # 引用帖子：补充原帖内容、作者和引用评论
-        elif action_type == 'QUOTE_POST':
-            quoted_id = action_args.get('quoted_id')
-            new_post_id = action_args.get('new_post_id')
-            
-            if quoted_id:
-                original_info = _get_post_info(cursor, quoted_id, agent_names)
-                if original_info:
-                    action_args['original_content'] = original_info.get('content', '')
-                    action_args['original_author_name'] = original_info.get('author_name', '')
-            
-            # 获取引用帖子的评论内容（quote_content）
-            if new_post_id:
-                cursor.execute("""
-                    SELECT quote_content FROM post WHERE post_id = ?
-                """, (new_post_id,))
-                row = cursor.fetchone()
-                if row and row[0]:
-                    action_args['quote_content'] = row[0]
-        
-        # 关注用户：补充被关注用户的名称
-        elif action_type == 'FOLLOW':
-            follow_id = action_args.get('follow_id')
-            if follow_id:
-                # 从 follow 表获取 followee_id
-                cursor.execute("""
-                    SELECT followee_id FROM follow WHERE follow_id = ?
-                """, (follow_id,))
-                row = cursor.fetchone()
-                if row:
-                    followee_id = row[0]
-                    target_name = _get_user_name(cursor, followee_id, agent_names)
-                    if target_name:
-                        action_args['target_user_name'] = target_name
-        
-        # 屏蔽用户：补充被屏蔽用户的名称
-        elif action_type == 'MUTE':
-            # 从 action_args 中获取 user_id 或 target_id
-            target_id = action_args.get('user_id') or action_args.get('target_id')
-            if target_id:
-                target_name = _get_user_name(cursor, target_id, agent_names)
-                if target_name:
-                    action_args['target_user_name'] = target_name
-        
-        # 点赞/踩评论：补充评论内容和作者
-        elif action_type in ('LIKE_COMMENT', 'DISLIKE_COMMENT'):
-            comment_id = action_args.get('comment_id')
-            if comment_id:
-                comment_info = _get_comment_info(cursor, comment_id, agent_names)
-                if comment_info:
-                    action_args['comment_content'] = comment_info.get('content', '')
-                    action_args['comment_author_name'] = comment_info.get('author_name', '')
-        
-        # 发表评论：补充所评论的帖子信息
-        elif action_type == 'CREATE_COMMENT':
-            post_id = action_args.get('post_id')
-            if post_id:
-                post_info = _get_post_info(cursor, post_id, agent_names)
-                if post_info:
-                    action_args['post_content'] = post_info.get('content', '')
-                    action_args['post_author_name'] = post_info.get('author_name', '')
-    
-    except Exception as e:
-        # 补充上下文失败不影响主流程
-        print(f"补充动作上下文失败: {e}")
-
-
-def _get_post_info(
-    cursor,
-    post_id: int,
-    agent_names: Dict[int, str]
-) -> Optional[Dict[str, str]]:
-    """
-    获取帖子信息
-    
-    Args:
-        cursor: 数据库游标
-        post_id: 帖子ID
-        agent_names: agent_id -> agent_name 映射
-        
-    Returns:
-        包含 content 和 author_name 的字典，或 None
-    """
-    try:
-        cursor.execute("""
-            SELECT p.content, p.user_id, u.agent_id
-            FROM post p
-            LEFT JOIN user u ON p.user_id = u.user_id
-            WHERE p.post_id = ?
-        """, (post_id,))
-        row = cursor.fetchone()
-        if row:
-            content = row[0] or ''
-            user_id = row[1]
-            agent_id = row[2]
-            
-            # 优先使用 agent_names 中的名称
-            author_name = ''
-            if agent_id is not None and agent_id in agent_names:
-                author_name = agent_names[agent_id]
-            elif user_id:
-                # 从 user 表获取名称
-                cursor.execute("SELECT name, user_name FROM user WHERE user_id = ?", (user_id,))
-                user_row = cursor.fetchone()
-                if user_row:
-                    author_name = user_row[0] or user_row[1] or ''
-            
-            return {'content': content, 'author_name': author_name}
-    except Exception:
-        pass
-    return None
-
-
-def _get_user_name(
-    cursor,
-    user_id: int,
-    agent_names: Dict[int, str]
-) -> Optional[str]:
-    """
-    获取用户名称
-    
-    Args:
-        cursor: 数据库游标
-        user_id: 用户ID
-        agent_names: agent_id -> agent_name 映射
-        
-    Returns:
-        用户名称，或 None
-    """
-    try:
-        cursor.execute("""
-            SELECT agent_id, name, user_name FROM user WHERE user_id = ?
-        """, (user_id,))
-        row = cursor.fetchone()
-        if row:
-            agent_id = row[0]
-            name = row[1]
-            user_name = row[2]
-            
-            # 优先使用 agent_names 中的名称
-            if agent_id is not None and agent_id in agent_names:
-                return agent_names[agent_id]
-            return name or user_name or ''
-    except Exception:
-        pass
-    return None
-
-
-def _get_comment_info(
-    cursor,
-    comment_id: int,
-    agent_names: Dict[int, str]
-) -> Optional[Dict[str, str]]:
-    """
-    获取评论信息
-    
-    Args:
-        cursor: 数据库游标
-        comment_id: 评论ID
-        agent_names: agent_id -> agent_name 映射
-        
-    Returns:
-        包含 content 和 author_name 的字典，或 None
-    """
-    try:
-        cursor.execute("""
-            SELECT c.content, c.user_id, u.agent_id
-            FROM comment c
-            LEFT JOIN user u ON c.user_id = u.user_id
-            WHERE c.comment_id = ?
-        """, (comment_id,))
-        row = cursor.fetchone()
-        if row:
-            content = row[0] or ''
-            user_id = row[1]
-            agent_id = row[2]
-            
-            # 优先使用 agent_names 中的名称
-            author_name = ''
-            if agent_id is not None and agent_id in agent_names:
-                author_name = agent_names[agent_id]
-            elif user_id:
-                # 从 user 表获取名称
-                cursor.execute("SELECT name, user_name FROM user WHERE user_id = ?", (user_id,))
-                user_row = cursor.fetchone()
-                if user_row:
-                    author_name = user_row[0] or user_row[1] or ''
-            
-            return {'content': content, 'author_name': author_name}
-    except Exception:
-        pass
-    return None
 
 
 def create_model(config: Dict[str, Any], use_boost: bool = False):
