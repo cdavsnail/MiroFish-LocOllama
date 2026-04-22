@@ -325,31 +325,8 @@ let currentSimulation = null
 let linkLabelsRef = null
 let linkLabelBgRef = null
 
-const renderGraph = () => {
-  if (!graphSvg.value || !props.graphData) return
-  
-  // 停止之前的仿真
-  if (currentSimulation) {
-    currentSimulation.stop()
-  }
-  
-  const container = graphContainer.value
-  const width = container.clientWidth
-  const height = container.clientHeight
-  
-  const svg = d3.select(graphSvg.value)
-    .attr('width', width)
-    .attr('height', height)
-    .attr('viewBox', `0 0 ${width} ${height}`)
-    
-  svg.selectAll('*').remove()
-  
-  const nodesData = props.graphData.nodes || []
-  const edgesData = props.graphData.edges || []
-  
-  if (nodesData.length === 0) return
 
-  // Prep data
+const processGraphData = (nodesData, edgesData) => {
   const nodeMap = {}
   nodesData.forEach(n => nodeMap[n.uuid] = n)
   
@@ -462,14 +439,12 @@ const renderGraph = () => {
       }
     })
   })
-    
-  // Color scale
-  const colorMap = {}
-  entityTypes.value.forEach(t => colorMap[t.name] = t.color)
-  const getColor = (type) => colorMap[type] || '#999'
 
-  // Simulation - 根据边数量动态调整节点间距
-  const simulation = d3.forceSimulation(nodes)
+  return { nodes, edges }
+}
+
+const setupSimulation = (nodes, edges, width, height) => {
+  return d3.forceSimulation(nodes)
     .force('link', d3.forceLink(edges).id(d => d.id).distance(d => {
       // 根据这对节点之间的边数量动态调整距离
       // 基础距离 150，每多一条边增加 40
@@ -483,91 +458,123 @@ const renderGraph = () => {
     // 添加向中心的引力，让独立的节点群聚集到中心区域
     .force('x', d3.forceX(width / 2).strength(0.04))
     .force('y', d3.forceY(height / 2).strength(0.04))
-  
-  currentSimulation = simulation
+}
 
-  const g = svg.append('g')
+const getLinkPath = (d) => {
+  const sx = d.source.x, sy = d.source.y
+  const tx = d.target.x, ty = d.target.y
   
-  // Zoom
+  // 检测自环
+  if (d.isSelfLoop) {
+    // 自环：绘制一个圆弧从节点出发再返回
+    const loopRadius = 30
+    // 从节点右侧出发，绕一圈回来
+    const x1 = sx + 8  // 起点偏移
+    const y1 = sy - 4
+    const x2 = sx + 8  // 终点偏移
+    const y2 = sy + 4
+    // 使用圆弧绘制自环（sweep-flag=1 顺时针）
+    return `M${x1},${y1} A${loopRadius},${loopRadius} 0 1,1 ${x2},${y2}`
+  }
+
+  if (d.curvature === 0) {
+    // 直线
+    return `M${sx},${sy} L${tx},${ty}`
+  }
+
+  // 计算曲线控制点 - 根据边数量和距离动态调整
+  const dx = tx - sx, dy = ty - sy
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  // 垂直于连线方向的偏移，根据距离比例计算，保证曲线明显可见
+  // 边越多，偏移量占距离的比例越大
+  const pairTotal = d.pairTotal || 1
+  const offsetRatio = 0.25 + pairTotal * 0.05 // 基础25%，每多一条边增加5%
+  const baseOffset = Math.max(35, dist * offsetRatio)
+  const offsetX = -dy / dist * d.curvature * baseOffset
+  const offsetY = dx / dist * d.curvature * baseOffset
+  const cx = (sx + tx) / 2 + offsetX
+  const cy = (sy + ty) / 2 + offsetY
+
+  return `M${sx},${sy} Q${cx},${cy} ${tx},${ty}`
+}
+
+const getLinkMidpoint = (d) => {
+  const sx = d.source.x, sy = d.source.y
+  const tx = d.target.x, ty = d.target.y
+  
+  // 检测自环
+  if (d.isSelfLoop) {
+    // 自环标签位置：节点右侧
+    return { x: sx + 70, y: sy }
+  }
+  
+  if (d.curvature === 0) {
+    return { x: (sx + tx) / 2, y: (sy + ty) / 2 }
+  }
+  
+  // 二次贝塞尔曲线的中点 t=0.5
+  const dx = tx - sx, dy = ty - sy
+  const dist = Math.sqrt(dx * dx + dy * dy)
+  const pairTotal = d.pairTotal || 1
+  const offsetRatio = 0.25 + pairTotal * 0.05
+  const baseOffset = Math.max(35, dist * offsetRatio)
+  const offsetX = -dy / dist * d.curvature * baseOffset
+  const offsetY = dx / dist * d.curvature * baseOffset
+  const cx = (sx + tx) / 2 + offsetX
+  const cy = (sy + ty) / 2 + offsetY
+
+  // 二次贝塞尔曲线公式 B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2, t=0.5
+  const midX = 0.25 * sx + 0.5 * cx + 0.25 * tx
+  const midY = 0.25 * sy + 0.5 * cy + 0.25 * ty
+
+  return { x: midX, y: midY }
+}
+
+const createDragBehavior = (simulation) => {
+  return d3.drag()
+    .on('start', (event, d) => {
+      // 只记录位置，不重启仿真（区分点击和拖拽）
+      d.fx = d.x
+      d.fy = d.y
+      d._dragStartX = event.x
+      d._dragStartY = event.y
+      d._isDragging = false
+    })
+    .on('drag', (event, d) => {
+      // 检测是否真正开始拖拽（移动超过阈值）
+      const dx = event.x - d._dragStartX
+      const dy = event.y - d._dragStartY
+      const distance = Math.sqrt(dx * dx + dy * dy)
+
+      if (!d._isDragging && distance > 3) {
+        // 首次检测到真正拖拽，才重启仿真
+        d._isDragging = true
+        simulation.alphaTarget(0.3).restart()
+      }
+
+      if (d._isDragging) {
+        d.fx = event.x
+        d.fy = event.y
+      }
+    })
+    .on('end', (event, d) => {
+      // 只有真正拖拽过才让仿真逐渐停止
+      if (d._isDragging) {
+        simulation.alphaTarget(0)
+      }
+      d.fx = null
+      d.fy = null
+      d._isDragging = false
+    })
+}
+
+const setupZoom = (svg, g, width, height) => {
   svg.call(d3.zoom().extent([[0, 0], [width, height]]).scaleExtent([0.1, 4]).on('zoom', (event) => {
     g.attr('transform', event.transform)
   }))
+}
 
-  // Links - 使用 path 支持曲线
-  const linkGroup = g.append('g').attr('class', 'links')
-  
-  // 计算曲线路径
-  const getLinkPath = (d) => {
-    const sx = d.source.x, sy = d.source.y
-    const tx = d.target.x, ty = d.target.y
-    
-    // 检测自环
-    if (d.isSelfLoop) {
-      // 自环：绘制一个圆弧从节点出发再返回
-      const loopRadius = 30
-      // 从节点右侧出发，绕一圈回来
-      const x1 = sx + 8  // 起点偏移
-      const y1 = sy - 4
-      const x2 = sx + 8  // 终点偏移
-      const y2 = sy + 4
-      // 使用圆弧绘制自环（sweep-flag=1 顺时针）
-      return `M${x1},${y1} A${loopRadius},${loopRadius} 0 1,1 ${x2},${y2}`
-    }
-    
-    if (d.curvature === 0) {
-      // 直线
-      return `M${sx},${sy} L${tx},${ty}`
-    }
-    
-    // 计算曲线控制点 - 根据边数量和距离动态调整
-    const dx = tx - sx, dy = ty - sy
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    // 垂直于连线方向的偏移，根据距离比例计算，保证曲线明显可见
-    // 边越多，偏移量占距离的比例越大
-    const pairTotal = d.pairTotal || 1
-    const offsetRatio = 0.25 + pairTotal * 0.05 // 基础25%，每多一条边增加5%
-    const baseOffset = Math.max(35, dist * offsetRatio)
-    const offsetX = -dy / dist * d.curvature * baseOffset
-    const offsetY = dx / dist * d.curvature * baseOffset
-    const cx = (sx + tx) / 2 + offsetX
-    const cy = (sy + ty) / 2 + offsetY
-    
-    return `M${sx},${sy} Q${cx},${cy} ${tx},${ty}`
-  }
-  
-  // 计算曲线中点（用于标签定位）
-  const getLinkMidpoint = (d) => {
-    const sx = d.source.x, sy = d.source.y
-    const tx = d.target.x, ty = d.target.y
-    
-    // 检测自环
-    if (d.isSelfLoop) {
-      // 自环标签位置：节点右侧
-      return { x: sx + 70, y: sy }
-    }
-    
-    if (d.curvature === 0) {
-      return { x: (sx + tx) / 2, y: (sy + ty) / 2 }
-    }
-    
-    // 二次贝塞尔曲线的中点 t=0.5
-    const dx = tx - sx, dy = ty - sy
-    const dist = Math.sqrt(dx * dx + dy * dy)
-    const pairTotal = d.pairTotal || 1
-    const offsetRatio = 0.25 + pairTotal * 0.05
-    const baseOffset = Math.max(35, dist * offsetRatio)
-    const offsetX = -dy / dist * d.curvature * baseOffset
-    const offsetY = dx / dist * d.curvature * baseOffset
-    const cx = (sx + tx) / 2 + offsetX
-    const cy = (sy + ty) / 2 + offsetY
-    
-    // 二次贝塞尔曲线公式 B(t) = (1-t)²P0 + 2(1-t)tP1 + t²P2, t=0.5
-    const midX = 0.25 * sx + 0.5 * cx + 0.25 * tx
-    const midY = 0.25 * sy + 0.5 * cy + 0.25 * ty
-    
-    return { x: midX, y: midY }
-  }
-  
+const renderLinks = (linkGroup, edges, showEdgeLabels) => {
   const link = linkGroup.selectAll('path')
     .data(edges)
     .enter().append('path')
@@ -575,22 +582,7 @@ const renderGraph = () => {
     .attr('stroke-width', 1.5)
     .attr('fill', 'none')
     .style('cursor', 'pointer')
-    .on('click', (event, d) => {
-      event.stopPropagation()
-      // 重置之前选中边的样式
-      linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-      linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
-      linkLabels.attr('fill', '#666')
-      // 高亮当前选中的边
-      d3.select(event.target).attr('stroke', '#3498db').attr('stroke-width', 3)
-      
-      selectedItem.value = {
-        type: 'edge',
-        data: d.rawData
-      }
-    })
 
-  // Link labels background (白色背景使文字更清晰)
   const linkLabelBg = linkGroup.selectAll('rect')
     .data(edges)
     .enter().append('rect')
@@ -600,22 +592,7 @@ const renderGraph = () => {
     .style('cursor', 'pointer')
     .style('pointer-events', 'all')
     .style('display', showEdgeLabels.value ? 'block' : 'none')
-    .on('click', (event, d) => {
-      event.stopPropagation()
-      linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-      linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
-      linkLabels.attr('fill', '#666')
-      // 高亮对应的边
-      link.filter(l => l === d).attr('stroke', '#3498db').attr('stroke-width', 3)
-      d3.select(event.target).attr('fill', 'rgba(52, 152, 219, 0.1)')
-      
-      selectedItem.value = {
-        type: 'edge',
-        data: d.rawData
-      }
-    })
 
-  // Link labels
   const linkLabels = linkGroup.selectAll('text')
     .data(edges)
     .enter().append('text')
@@ -628,29 +605,11 @@ const renderGraph = () => {
     .style('pointer-events', 'all')
     .style('font-family', 'system-ui, sans-serif')
     .style('display', showEdgeLabels.value ? 'block' : 'none')
-    .on('click', (event, d) => {
-      event.stopPropagation()
-      linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-      linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
-      linkLabels.attr('fill', '#666')
-      // 高亮对应的边
-      link.filter(l => l === d).attr('stroke', '#3498db').attr('stroke-width', 3)
-      d3.select(event.target).attr('fill', '#3498db')
-      
-      selectedItem.value = {
-        type: 'edge',
-        data: d.rawData
-      }
-    })
-  
-  // 保存引用供外部控制显隐
-  linkLabelsRef = linkLabels
-  linkLabelBgRef = linkLabelBg
 
-  // Nodes group
-  const nodeGroup = g.append('g').attr('class', 'nodes')
-  
-  // Node circles
+  return { link, linkLabelBg, linkLabels }
+}
+
+const renderNodes = (nodeGroup, nodes, getColor, dragBehavior) => {
   const node = nodeGroup.selectAll('circle')
     .data(nodes)
     .enter().append('circle')
@@ -659,73 +618,8 @@ const renderGraph = () => {
     .attr('stroke', '#fff')
     .attr('stroke-width', 2.5)
     .style('cursor', 'pointer')
-    .call(d3.drag()
-      .on('start', (event, d) => {
-        // 只记录位置，不重启仿真（区分点击和拖拽）
-        d.fx = d.x
-        d.fy = d.y
-        d._dragStartX = event.x
-        d._dragStartY = event.y
-        d._isDragging = false
-      })
-      .on('drag', (event, d) => {
-        // 检测是否真正开始拖拽（移动超过阈值）
-        const dx = event.x - d._dragStartX
-        const dy = event.y - d._dragStartY
-        const distance = Math.sqrt(dx * dx + dy * dy)
-        
-        if (!d._isDragging && distance > 3) {
-          // 首次检测到真正拖拽，才重启仿真
-          d._isDragging = true
-          simulation.alphaTarget(0.3).restart()
-        }
-        
-        if (d._isDragging) {
-          d.fx = event.x
-          d.fy = event.y
-        }
-      })
-      .on('end', (event, d) => {
-        // 只有真正拖拽过才让仿真逐渐停止
-        if (d._isDragging) {
-          simulation.alphaTarget(0)
-        }
-        d.fx = null
-        d.fy = null
-        d._isDragging = false
-      })
-    )
-    .on('click', (event, d) => {
-      event.stopPropagation()
-      // 重置所有节点样式
-      node.attr('stroke', '#fff').attr('stroke-width', 2.5)
-      linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
-      // 高亮选中节点
-      d3.select(event.target).attr('stroke', '#E91E63').attr('stroke-width', 4)
-      // 高亮与此节点相连的边
-      link.filter(l => l.source.id === d.id || l.target.id === d.id)
-        .attr('stroke', '#E91E63')
-        .attr('stroke-width', 2.5)
-      
-      selectedItem.value = {
-        type: 'node',
-        data: d.rawData,
-        entityType: d.type,
-        color: getColor(d.type)
-      }
-    })
-    .on('mouseenter', (event, d) => {
-      if (!selectedItem.value || selectedItem.value.data?.uuid !== d.rawData.uuid) {
-        d3.select(event.target).attr('stroke', '#333').attr('stroke-width', 3)
-      }
-    })
-    .on('mouseleave', (event, d) => {
-      if (!selectedItem.value || selectedItem.value.data?.uuid !== d.rawData.uuid) {
-        d3.select(event.target).attr('stroke', '#fff').attr('stroke-width', 2.5)
-      }
-    })
+    .call(dragBehavior)
 
-  // Node Labels
   const nodeLabels = nodeGroup.selectAll('text')
     .data(nodes)
     .enter().append('text')
@@ -738,20 +632,131 @@ const renderGraph = () => {
     .style('pointer-events', 'none')
     .style('font-family', 'system-ui, sans-serif')
 
+  return { node, nodeLabels }
+}
+
+
+const renderGraph = () => {
+  if (!graphSvg.value || !props.graphData) return
+
+  // 停止之前的仿真
+  if (currentSimulation) {
+    currentSimulation.stop()
+  }
+
+  const container = graphContainer.value
+  const width = container.clientWidth
+  const height = container.clientHeight
+
+  const svg = d3.select(graphSvg.value)
+    .attr('width', width)
+    .attr('height', height)
+    .attr('viewBox', `0 0 ${width} ${height}`)
+
+  svg.selectAll('*').remove()
+
+  const nodesData = props.graphData.nodes || []
+  const edgesData = props.graphData.edges || []
+
+  if (nodesData.length === 0) return
+
+  // Prep data
+  const { nodes, edges } = processGraphData(nodesData, edgesData)
+
+  // Color scale
+  const colorMap = {}
+  entityTypes.value.forEach(t => colorMap[t.name] = t.color)
+  const getColor = (type) => colorMap[type] || '#999'
+
+  // Simulation
+  const simulation = setupSimulation(nodes, edges, width, height)
+  currentSimulation = simulation
+
+  const g = svg.append('g')
+
+  // Zoom
+  setupZoom(svg, g, width, height)
+
+  // Links
+  const linkGroup = g.append('g').attr('class', 'links')
+  const { link, linkLabelBg, linkLabels } = renderLinks(linkGroup, edges, showEdgeLabels)
+
+  linkLabelsRef = linkLabels
+  linkLabelBgRef = linkLabelBg
+
+  // Nodes
+  const nodeGroup = g.append('g').attr('class', 'nodes')
+  const dragBehavior = createDragBehavior(simulation)
+  const { node, nodeLabels } = renderNodes(nodeGroup, nodes, getColor, dragBehavior)
+
+  // Set up interaction events
+  link.on('click', (event, d) => {
+    event.stopPropagation()
+    linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
+    linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
+    linkLabels.attr('fill', '#666')
+    d3.select(event.target).attr('stroke', '#3498db').attr('stroke-width', 3)
+
+    selectedItem.value = { type: 'edge', data: d.rawData }
+  })
+
+  linkLabelBg.on('click', (event, d) => {
+    event.stopPropagation()
+    linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
+    linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
+    linkLabels.attr('fill', '#666')
+    link.filter(l => l === d).attr('stroke', '#3498db').attr('stroke-width', 3)
+    d3.select(event.target).attr('fill', 'rgba(52, 152, 219, 0.1)')
+
+    selectedItem.value = { type: 'edge', data: d.rawData }
+  })
+
+  linkLabels.on('click', (event, d) => {
+    event.stopPropagation()
+    linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
+    linkLabelBg.attr('fill', 'rgba(255,255,255,0.95)')
+    linkLabels.attr('fill', '#666')
+    link.filter(l => l === d).attr('stroke', '#3498db').attr('stroke-width', 3)
+    d3.select(event.target).attr('fill', '#3498db')
+
+    selectedItem.value = { type: 'edge', data: d.rawData }
+  })
+
+  node.on('click', (event, d) => {
+    event.stopPropagation()
+    node.attr('stroke', '#fff').attr('stroke-width', 2.5)
+    linkGroup.selectAll('path').attr('stroke', '#C0C0C0').attr('stroke-width', 1.5)
+    d3.select(event.target).attr('stroke', '#E91E63').attr('stroke-width', 4)
+    link.filter(l => l.source.id === d.id || l.target.id === d.id)
+      .attr('stroke', '#E91E63')
+      .attr('stroke-width', 2.5)
+
+    selectedItem.value = {
+      type: 'node',
+      data: d.rawData,
+      entityType: d.type,
+      color: getColor(d.type)
+    }
+  })
+  .on('mouseenter', (event, d) => {
+    if (!selectedItem.value || selectedItem.value.data?.uuid !== d.rawData.uuid) {
+      d3.select(event.target).attr('stroke', '#333').attr('stroke-width', 3)
+    }
+  })
+  .on('mouseleave', (event, d) => {
+    if (!selectedItem.value || selectedItem.value.data?.uuid !== d.rawData.uuid) {
+      d3.select(event.target).attr('stroke', '#fff').attr('stroke-width', 2.5)
+    }
+  })
+
   simulation.on('tick', () => {
-    // 更新曲线路径
     link.attr('d', d => getLinkPath(d))
     
-    // 更新边标签位置（无旋转，水平显示更清晰）
     linkLabels.each(function(d) {
       const mid = getLinkMidpoint(d)
-      d3.select(this)
-        .attr('x', mid.x)
-        .attr('y', mid.y)
-        .attr('transform', '') // 移除旋转，保持水平
+      d3.select(this).attr('x', mid.x).attr('y', mid.y).attr('transform', '')
     })
     
-    // 更新边标签背景
     linkLabelBg.each(function(d, i) {
       const mid = getLinkMidpoint(d)
       const textEl = linkLabels.nodes()[i]
@@ -761,19 +766,13 @@ const renderGraph = () => {
         .attr('y', mid.y - bbox.height / 2 - 2)
         .attr('width', bbox.width + 8)
         .attr('height', bbox.height + 4)
-        .attr('transform', '') // 移除旋转
+        .attr('transform', '')
     })
 
-    node
-      .attr('cx', d => d.x)
-      .attr('cy', d => d.y)
-
-    nodeLabels
-      .attr('x', d => d.x)
-      .attr('y', d => d.y)
+    node.attr('cx', d => d.x).attr('cy', d => d.y)
+    nodeLabels.attr('x', d => d.x).attr('y', d => d.y)
   })
   
-  // 点击空白处关闭详情面板
   svg.on('click', () => {
     selectedItem.value = null
     node.attr('stroke', '#fff').attr('stroke-width', 2.5)
