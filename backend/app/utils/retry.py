@@ -236,3 +236,24 @@ class RetryableAPIClient:
         
         return results, failures
 
+
+def with_retry(max_retries=3, delay=1, exceptions=(Exception,)):
+    """
+    Deprecated: Use retry_with_backoff instead.
+    Simple retry decorator with fixed delay.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt == max_retries:
+                        raise
+                    time.sleep(delay)
+            raise last_exception
+        return wrapper
+    return decorator
