@@ -825,6 +825,15 @@ const submitSurvey = async () => {
       const resultData = res.data.result || res.data
       const resultsDict = resultData.results || resultData
       
+      // 预先建立字典以优化查找性能
+      let resultsMap = null;
+      if (Array.isArray(resultsDict)) {
+        resultsMap = new Map();
+        for (const r of resultsDict) {
+          resultsMap.set(r.agent_id, r);
+        }
+      }
+
       // 将对象字典转换为数组格式
       const surveyResultsList = []
       
@@ -842,9 +851,9 @@ const submitSurvey = async () => {
           if (agentResult) {
             responseContent = agentResult.response || agentResult.answer || t('step5.noResponse')
           }
-        } else if (Array.isArray(resultsDict)) {
+        } else if (resultsMap) {
           // 兼容数组格式
-          const matchedResult = resultsDict.find(r => r.agent_id === agentIdx)
+          const matchedResult = resultsMap.get(agentIdx)
           if (matchedResult) {
             responseContent = matchedResult.response || matchedResult.answer || t('step5.noResponse')
           }
