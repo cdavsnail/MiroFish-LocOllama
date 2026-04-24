@@ -47,7 +47,7 @@
             <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="MiroFish Logo" class="hero-logo" />
           </div>
           
-          <button class="scroll-down-btn" @click="scrollToBottom">
+          <button class="scroll-down-btn" aria-label="Scroll down" @click="scrollToBottom">
             ↓
           </button>
         </div>
@@ -161,7 +161,7 @@
                   <div v-for="(file, index) in files" :key="index" class="file-item">
                     <span class="file-icon">📄</span>
                     <span class="file-name">{{ file.name }}</span>
-                    <button @click.stop="removeFile(index)" class="remove-btn">×</button>
+                    <button @click.stop="removeFile(index)" class="remove-btn" :aria-label="'Remove ' + file.name">×</button>
                   </div>
                 </div>
               </div>
