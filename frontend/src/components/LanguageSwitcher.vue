@@ -1,16 +1,27 @@
 <template>
   <div class="language-switcher" ref="switcherRef">
-    <button class="switcher-trigger" @click="toggleDropdown">
+    <button
+      class="switcher-trigger"
+      @click="toggleDropdown"
+      aria-haspopup="listbox"
+      :aria-expanded="open"
+      :aria-label="`Select language. Current language: ${currentLabel}`"
+    >
       {{ currentLabel }}
-      <span class="caret">{{ open ? '▲' : '▼' }}</span>
+      <span class="caret" aria-hidden="true">{{ open ? '▲' : '▼' }}</span>
     </button>
-    <ul v-if="open" class="switcher-dropdown">
+    <ul v-if="open" class="switcher-dropdown" role="listbox">
       <li
         v-for="loc in availableLocales"
         :key="loc.key"
         class="switcher-option"
         :class="{ active: loc.key === locale }"
         @click="switchLocale(loc.key)"
+        @keydown.enter="switchLocale(loc.key)"
+        @keydown.space.prevent="switchLocale(loc.key)"
+        role="option"
+        :aria-selected="loc.key === locale"
+        tabindex="0"
       >
         {{ loc.label }}
       </li>
@@ -85,6 +96,11 @@ onUnmounted(() => {
   border-color: #999;
 }
 
+.switcher-trigger:focus-visible {
+  outline: 2px solid #333;
+  outline-offset: 2px;
+}
+
 .caret {
   font-size: 0.6rem;
 }
@@ -112,8 +128,10 @@ onUnmounted(() => {
   transition: background 0.15s;
 }
 
-.switcher-option:hover {
+.switcher-option:hover,
+.switcher-option:focus-visible {
   background: #F0F0F0;
+  outline: none;
 }
 
 .switcher-option.active {
