@@ -12,6 +12,21 @@ from ..utils.logger import get_logger
 logger = get_logger('mirofish.retry')
 
 
+def with_retry(
+    max_retries: int = 3,
+    delay: float = 1.0,
+    exceptions: Tuple[Type[Exception], ...] = (Exception,)
+):
+    """
+    Deprecated retry decorator. Use retry_with_backoff instead.
+    """
+    return retry_with_backoff(
+        max_retries=max_retries,
+        initial_delay=delay,
+        exceptions=exceptions,
+        jitter=False
+    )
+
 def retry_with_backoff(
     max_retries: int = 3,
     initial_delay: float = 1.0,
