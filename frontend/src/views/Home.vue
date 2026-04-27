@@ -47,7 +47,7 @@
             <img src="../assets/logo/MiroFish_logo_left.jpeg" alt="MiroFish Logo" class="hero-logo" />
           </div>
           
-          <button class="scroll-down-btn" @click="scrollToBottom">
+          <button class="scroll-down-btn" aria-label="Scroll down" @click="scrollToBottom">
             ↓
           </button>
         </div>
@@ -136,10 +136,15 @@
               <div 
                 class="upload-zone"
                 :class="{ 'drag-over': isDragOver, 'has-files': files.length > 0 }"
+                role="button"
+                tabindex="0"
+                aria-label="Upload files area"
                 @dragover.prevent="handleDragOver"
                 @dragleave.prevent="handleDragLeave"
                 @drop.prevent="handleDrop"
                 @click="triggerFileInput"
+                @keydown.enter="triggerFileInput"
+                @keydown.space.prevent="triggerFileInput"
               >
                 <input
                   ref="fileInput"
@@ -161,7 +166,7 @@
                   <div v-for="(file, index) in files" :key="index" class="file-item">
                     <span class="file-icon">📄</span>
                     <span class="file-name">{{ file.name }}</span>
-                    <button @click.stop="removeFile(index)" class="remove-btn">×</button>
+                    <button @click.stop="removeFile(index)" class="remove-btn" aria-label="Remove file">×</button>
                   </div>
                 </div>
               </div>
@@ -540,6 +545,11 @@ const startSimulation = () => {
   border-color: var(--orange);
 }
 
+.scroll-down-btn:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+
 /* Dashboard 双栏布局 */
 .dashboard-section {
   display: flex;
@@ -715,6 +725,11 @@ const startSimulation = () => {
   border-color: #999;
 }
 
+.upload-zone:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+
 .upload-placeholder {
   text-align: center;
 }
@@ -771,6 +786,15 @@ const startSimulation = () => {
   cursor: pointer;
   font-size: 1.2rem;
   color: #999;
+}
+
+.remove-btn:hover,
+.remove-btn:focus-visible {
+  color: var(--orange);
+  outline: none;
+}
+.remove-btn:focus-visible {
+  text-decoration: underline;
 }
 
 .console-divider {
