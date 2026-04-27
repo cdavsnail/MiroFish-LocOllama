@@ -99,7 +99,8 @@ Click the image to watch MiroFish's deep prediction of the lost ending based on 
 
 | Tool | Version | Description | Check Installation |
 |------|---------|-------------|-------------------|
-| **Node.js** | 18+ | Frontend runtime, includes npm | `node -v` |
+| **Node.js** | 18+ | Frontend runtime, includes pnpm | `node -v` |
+| **pnpm** | Latest | Frontend package manager | `pnpm --version` |
 | **Python** | ≥3.11, ≤3.12 | Backend runtime | `python --version` |
 | **uv** | Latest | Python package manager | `uv --version` |
 
@@ -116,39 +117,36 @@ cp .env.example .env
 
 ```env
 # LLM API Configuration (supports any LLM API with OpenAI SDK format)
-# Recommended: Alibaba Qwen-plus model via Bailian Platform: https://bailian.console.aliyun.com/
-# High consumption, try simulations with fewer than 40 rounds first
-LLM_API_KEY=your_api_key
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+# Default is configured to use local Ollama instance for zero-cost execution
+LLM_API_KEY=ollama
+LLM_BASE_URL=http://localhost:11434/v1
 LLM_MODEL_NAME=qwen-plus
-
-# Zep Cloud Configuration
-# Free monthly quota is sufficient for simple usage: https://app.getzep.com/
-ZEP_API_KEY=your_zep_api_key
 ```
+
+> **Note on Graph Memory:** MiroFish utilizes a local JSON-based graph system (`LocalGraph` / `ZepMock`) for memory and entity extraction. Zep Cloud is no longer required.
 
 #### 2. Install Dependencies
 
 ```bash
 # One-click installation of all dependencies (root + frontend + backend)
-npm run setup:all
+pnpm run setup:all
 ```
 
 Or install step by step:
 
 ```bash
 # Install Node dependencies (root + frontend)
-npm run setup
+pnpm run setup
 
 # Install Python dependencies (backend, auto-creates virtual environment)
-npm run setup:backend
+pnpm run setup:backend
 ```
 
 #### 3. Start Services
 
 ```bash
 # Start both frontend and backend (run from project root)
-npm run dev
+pnpm run dev
 ```
 
 **Service URLs:**
@@ -158,8 +156,16 @@ npm run dev
 **Start Individually:**
 
 ```bash
-npm run backend   # Start backend only
-npm run frontend  # Start frontend only
+pnpm run backend   # Start backend only
+pnpm run frontend  # Start frontend only
+```
+
+#### 4. Testing
+
+To run the backend tests, navigate to the `backend` directory and use pytest via uv:
+
+```bash
+cd backend && uv run pytest
 ```
 
 ### Option 2: Docker Deployment
