@@ -9,8 +9,9 @@ import warnings
 # 需要在所有其他导入之前设置
 warnings.filterwarnings("ignore", message=".*resource_tracker.*")
 
-from flask import Flask, request
+from flask import Flask, request, send_from_directory
 from flask_cors import CORS
+import sys
 
 from .config import Config
 from .utils.logger import setup_logger, get_logger
@@ -18,7 +19,15 @@ from .utils.logger import setup_logger, get_logger
 
 def create_app(config_class=Config):
     """Flask应用工厂函数"""
-    app = Flask(__name__)
+    # 确定静态文件的路径，支持 PyInstaller 打包环境
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后的路径
+        static_folder = os.path.join(sys._MEIPASS, 'app', 'static', 'dist')
+    else:
+        # 开发环境路径
+        static_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), 'static', 'dist'))
+
+    app = Flask(__name__, static_folder=static_folder, static_url_path='/')
     app.config.from_object(config_class)
     
     # 设置JSON编码：确保中文直接显示（而不是 \uXXXX 格式）
@@ -72,6 +81,15 @@ def create_app(config_class=Config):
     @app.route('/health')
     def health():
         return {'status': 'ok', 'service': 'MiroFish Backend'}
+
+    # 捕获所有路由，交由 Vue 路由处理
+    @app.route('/', defaults={'path': ''})
+    @app.route('/<path:path>')
+    def serve_frontend(path):
+        if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+            return send_from_directory(app.static_folder, path)
+        else:
+            return send_from_directory(app.static_folder, 'index.html')
     
     if should_log_startup:
         logger.info("MiroFish Backend 启动完成")
