@@ -393,6 +393,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import DOMPurify from 'dompurify'
 import { getAgentLog, getConsoleLog } from '../api/report'
 
 const router = useRouter()
@@ -1973,7 +1974,7 @@ const renderMarkdown = (content) => {
   }
   html = tokens.join('')
 
-  return html
+  return DOMPurify.sanitize(html)
 }
 
 const getTimelineItemClass = (log, idx, total) => {
