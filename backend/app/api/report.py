@@ -6,7 +6,7 @@ Report API路由
 import os
 import traceback
 import threading
-from flask import request, jsonify, send_file
+from flask import request, jsonify, send_from_directory
 
 from . import report_bp
 from ..config import Config
@@ -420,14 +420,16 @@ def download_report(report_id: str):
                 f.write(report.markdown_content)
                 temp_path = f.name
             
-            return send_file(
-                temp_path,
+            return send_from_directory(
+                os.path.dirname(temp_path),
+                os.path.basename(temp_path),
                 as_attachment=True,
                 download_name=f"{report_id}.md"
             )
         
-        return send_file(
-            md_path,
+        return send_from_directory(
+            os.path.dirname(md_path),
+            os.path.basename(md_path),
             as_attachment=True,
             download_name=f"{report_id}.md"
         )

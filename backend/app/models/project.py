@@ -9,6 +9,7 @@ import uuid
 import shutil
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from werkzeug.utils import secure_filename
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from ..config import Config
@@ -254,7 +255,10 @@ class ProjectManager:
         os.makedirs(files_dir, exist_ok=True)
         
         # 生成安全的文件名
-        ext = os.path.splitext(original_filename)[1].lower()
+        secured_original = secure_filename(original_filename)
+        if not secured_original:
+            secured_original = "unnamed_file"
+        ext = os.path.splitext(secured_original)[1].lower()
         safe_filename = f"{uuid.uuid4().hex[:8]}{ext}"
         file_path = os.path.join(files_dir, safe_filename)
         
