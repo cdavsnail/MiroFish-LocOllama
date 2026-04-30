@@ -872,7 +872,7 @@ def _get_post_info(
     """
     try:
         cursor.execute("""
-            SELECT p.content, p.user_id, u.agent_id
+            SELECT p.content, p.user_id, u.agent_id, u.name, u.user_name
             FROM post p
             LEFT JOIN user u ON p.user_id = u.user_id
             WHERE p.post_id = ?
@@ -882,17 +882,15 @@ def _get_post_info(
             content = row[0] or ''
             user_id = row[1]
             agent_id = row[2]
+            name = row[3]
+            user_name = row[4]
             
             # 优先使用 agent_names 中的名称
             author_name = ''
             if agent_id is not None and agent_id in agent_names:
                 author_name = agent_names[agent_id]
             elif user_id:
-                # 从 user 表获取名称
-                cursor.execute("SELECT name, user_name FROM user WHERE user_id = ?", (user_id,))
-                user_row = cursor.fetchone()
-                if user_row:
-                    author_name = user_row[0] or user_row[1] or ''
+                author_name = name or user_name or ''
             
             return {'content': content, 'author_name': author_name}
     except Exception:
@@ -953,7 +951,7 @@ def _get_comment_info(
     """
     try:
         cursor.execute("""
-            SELECT c.content, c.user_id, u.agent_id
+            SELECT c.content, c.user_id, u.agent_id, u.name, u.user_name
             FROM comment c
             LEFT JOIN user u ON c.user_id = u.user_id
             WHERE c.comment_id = ?
@@ -963,17 +961,15 @@ def _get_comment_info(
             content = row[0] or ''
             user_id = row[1]
             agent_id = row[2]
+            name = row[3]
+            user_name = row[4]
             
             # 优先使用 agent_names 中的名称
             author_name = ''
             if agent_id is not None and agent_id in agent_names:
                 author_name = agent_names[agent_id]
             elif user_id:
-                # 从 user 表获取名称
-                cursor.execute("SELECT name, user_name FROM user WHERE user_id = ?", (user_id,))
-                user_row = cursor.fetchone()
-                if user_row:
-                    author_name = user_row[0] or user_row[1] or ''
+                author_name = name or user_name or ''
             
             return {'content': content, 'author_name': author_name}
     except Exception:
