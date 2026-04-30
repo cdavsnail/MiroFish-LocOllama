@@ -7,6 +7,7 @@ import os
 import traceback
 import threading
 from flask import request, jsonify
+from werkzeug.utils import secure_filename
 
 from . import graph_bp
 from ..config import Config
@@ -184,10 +185,11 @@ def generate_ontology():
         for file in uploaded_files:
             if file and file.filename and allowed_file(file.filename):
                 # 保存文件到项目目录
+                secure_name = secure_filename(file.filename)
                 file_info = ProjectManager.save_file_to_project(
                     project.project_id, 
                     file, 
-                    file.filename
+                    secure_name
                 )
                 project.files.append({
                     "filename": file_info["original_filename"],
