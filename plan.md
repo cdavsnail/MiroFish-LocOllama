@@ -1,0 +1,7 @@
+1. **Optimize `fetch_new_actions_from_db` in `backend/scripts/run_parallel_simulation.py`**:
+   - The current implementation iterates over every trace record (e.g. `LIKE_POST`) and makes an individual `SELECT` query to fetch `post` information, resulting in N+1 queries.
+   - Using `json_extract`, we can join `post`, `user`, `comment`, and `follow` tables directly with `trace` in one main query.
+   - Refactor `fetch_new_actions_from_db` to perform a single query joining `trace` to `post`, `comment`, `user`, and `follow` using SQLite's `json_extract(info, '$.[key]')` to extract the `post_id`, `comment_id`, etc., to get post contents, usernames, etc.
+   - Drop the use of separate query functions `_get_post_info`, `_get_user_name`, and `_get_comment_info` which causes N+1 problems.
+2. **Optimize `get_simulation_posts` and `get_simulation_comments` in `backend/app/api/simulation.py`**:
+   - Similar to the N+1 issue instruction, we should use SQL JOINs to fetch related user/author information in the primary query. The current implementation fetches all posts, but the frontend might be displaying author names which might require fetching user details later, or the frontend needs author details currently missing. Wait, the memory says "When enriching simulation data (e.g., in `run_parallel_simulation.py`), use SQL JOINs to fetch related user/author information in the primary query to avoid N+1 query patterns." I will focus on `run_parallel_simulation.py` first.
