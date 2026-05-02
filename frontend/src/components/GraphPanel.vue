@@ -40,7 +40,7 @@
             </svg>
           </div>
           <span class="hint-text">{{ $t('graph.pendingContentHint') }}</span>
-          <button class="hint-close-btn" @click="dismissFinishedHint" :title="$t('graph.closeHint')">
+          <button class="hint-close-btn" @click="dismissFinishedHint" :title="$t('graph.closeHint')" :aria-label="$t('common.close')">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"></line>
               <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -55,7 +55,7 @@
             <span v-if="selectedItem.type === 'node'" class="detail-type-badge" :style="{ background: selectedItem.color, color: '#fff' }">
               {{ selectedItem.entityType }}
             </span>
-            <button class="detail-close" @click="closeDetailPanel">×</button>
+            <button class="detail-close" @click="closeDetailPanel" :aria-label="$t('common.close')">×</button>
           </div>
           
           <!-- 节点详情 -->
