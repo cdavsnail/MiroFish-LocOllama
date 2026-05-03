@@ -5,3 +5,4 @@
 ## 2024-05-17 - Accessibility for Icon-only Buttons
 **Learning:** Icon-only buttons lack descriptive text, making them difficult to understand for screen reader users and those navigating by keyboard if focus styles are inadequate.
 **Action:** Ensure icon-only buttons always have a descriptive `aria-label` attribute and clear `:focus-visible` styling (like outlines or underline) to indicate interaction capability and focus.
+## 2026-05-03 - Accessibility for Icon-only Buttons\n**Learning:** Icon-only close buttons (like '×') lack context for screen readers and must have an explicit aria-label.\n**Action:** Use Vue i18n to add `:aria-label="$t('common.close')"` to all such buttons to ensure accessibility.
