@@ -1,0 +1,4 @@
+## 2024-05-24 - [Migrate send_file to send_from_directory for secure downloads]
+**Vulnerability:** The application was using `send_file` in `backend/app/api/report.py` and `backend/app/api/simulation.py` to serve user-requested files, such as reports and simulation configs. Depending on the input source, this can lead to path traversal vulnerabilities if an attacker provides a crafted payload (e.g. `../../../../etc/passwd`), potentially exposing sensitive server files.
+**Learning:** `send_file` does not provide native protections against path traversal if the filepath relies on unsanitized inputs. Using `os.path.dirname(path)` is anti-pattern and security theater.
+**Prevention:** File downloads in the Flask backend must always use `send_from_directory` with a fixed, trusted base directory to prevent malicious actors from navigating outside of the expected file root.
