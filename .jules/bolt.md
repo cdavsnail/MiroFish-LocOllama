@@ -1,0 +1,3 @@
+## 2025-05-06 - Avoid N+1 queries in SQLite simulation logging
+**Learning:** Fetching user information independently for each simulation action inside a loop causes a classic N+1 query problem, slowing down simulation logging, particularly in environments processing large batches.
+**Action:** When enriching simulation data (e.g., retrieving post or comment details along with author info), fetch all related fields using a `LEFT JOIN` in the initial `SELECT` query rather than executing secondary queries iteratively.
