@@ -55,7 +55,7 @@
             <span v-if="selectedItem.type === 'node'" class="detail-type-badge" :style="{ background: selectedItem.color, color: '#fff' }">
               {{ selectedItem.entityType }}
             </span>
-            <button class="detail-close" @click="closeDetailPanel">×</button>
+            <button class="detail-close" @click="closeDetailPanel" :aria-label="$t('common.close')">×</button>
           </div>
           
           <!-- 节点详情 -->
