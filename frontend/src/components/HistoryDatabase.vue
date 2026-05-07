@@ -119,7 +119,7 @@
                 </span>
                 <span class="modal-create-time">{{ formatDate(selectedProject.created_at) }} {{ formatTime(selectedProject.created_at) }}</span>
               </div>
-              <button class="modal-close" @click="closeModal">×</button>
+              <button class="modal-close" :aria-label="$t('common.close')" @click="closeModal">×</button>
             </div>
 
             <!-- 弹窗内容 -->
