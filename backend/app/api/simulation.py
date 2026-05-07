@@ -12,7 +12,7 @@ from ..config import Config
 from ..services.zep_entity_reader import ZepEntityReader
 from ..services.oasis_profile_generator import OasisProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
-from ..services.simulation_runner import SimulationRunner, RunnerStatus
+from ..services.simulation_runner import SimulationRunner
 from ..utils.logger import get_logger
 from ..utils.locale import t, get_locale, set_locale
 from ..models.project import ProjectManager
@@ -398,9 +398,7 @@ def prepare_simulation():
         }
     """
     import threading
-    import os
     from ..models.task import TaskManager, TaskStatus
-    from ..config import Config
     
     try:
         data = request.get_json() or {}
@@ -828,7 +826,6 @@ def _get_report_id_for_simulation(simulation_id: str) -> str:
         report_id 或 None
     """
     import json
-    from datetime import datetime
     
     # reports 目录路径：backend/uploads/reports
     # __file__ 是 app/api/simulation.py，需要向上两级到 backend/
@@ -1820,23 +1817,22 @@ def get_run_status_detail(simulation_id: str):
         )
         
         # 分平台获取动作
-        twitter_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform="twitter"
-        ) if not platform_filter or platform_filter == "twitter" else []
-        
-        reddit_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform="reddit"
-        ) if not platform_filter or platform_filter == "reddit" else []
+        if not platform_filter or platform_filter == "twitter":
+            twitter_actions = [a for a in all_actions if a.platform == "twitter"]
+        else:
+            twitter_actions = []
+
+        if not platform_filter or platform_filter == "reddit":
+            reddit_actions = [a for a in all_actions if a.platform == "reddit"]
+        else:
+            reddit_actions = []
         
         # 获取当前轮次的动作（recent_actions 只展示最新一轮）
         current_round = run_state.current_round
-        recent_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform=platform_filter,
-            round_num=current_round
-        ) if current_round > 0 else []
+        if current_round > 0:
+            recent_actions = [a for a in all_actions if a.round_num == current_round]
+        else:
+            recent_actions = []
         
         # 获取基础状态信息
         result = run_state.to_dict()
