@@ -60,7 +60,7 @@
                 <span v-if="selectedItem.type === 'node'" class="detail-badge" :style="{ background: selectedItem.color }">
                   {{ selectedItem.entityType }}
                 </span>
-                <button class="detail-close" @click="closeDetailPanel">×</button>
+                <button class="detail-close" @click="closeDetailPanel" aria-label="Close">×</button>
               </div>
               
               <!-- 节点详情 -->
@@ -1480,7 +1480,8 @@ onUnmounted(() => {
   transition: color 0.2s;
 }
 
-.detail-close:hover {
+.detail-close:hover,
+.detail-close:focus-visible {
   color: #333;
 }
 

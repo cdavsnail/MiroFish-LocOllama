@@ -55,7 +55,7 @@
             <span v-if="selectedItem.type === 'node'" class="detail-type-badge" :style="{ background: selectedItem.color, color: '#fff' }">
               {{ selectedItem.entityType }}
             </span>
-            <button class="detail-close" @click="closeDetailPanel">×</button>
+            <button class="detail-close" @click="closeDetailPanel" aria-label="Close">×</button>
           </div>
           
           <!-- 节点详情 -->
@@ -1081,7 +1081,8 @@ input:checked + .slider:before {
   transition: color 0.2s;
 }
 
-.detail-close:hover {
+.detail-close:hover,
+.detail-close:focus-visible {
   color: #333;
 }
 
