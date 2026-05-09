@@ -1,0 +1,4 @@
+## 2025-05-09 - Path Traversal Vulnerability via send_file
+**Vulnerability:** The Flask backend used `send_file` to serve temporary and user-generated files, exposing the application to path traversal vulnerabilities where attackers could retrieve arbitrary files from the server's filesystem.
+**Learning:** Using `send_file` without explicit path sanitization is a significant security risk. Furthermore, extracting the directory from a user-provided or potentially tainted path via `os.path.dirname(path)` is an anti-pattern and constitutes "security theater," as it still relies on untrusted input for the base path.
+**Prevention:** Always use `send_from_directory` with a trusted, fixed base directory instead of `send_file` for downloading dynamically generated or user-specific files to enforce strict boundary checks and prevent path traversal.
