@@ -540,7 +540,7 @@
             </div>
             <span class="modal-profession">{{ selectedProfile.profession }}</span>
           </div>
-          <button class="close-btn" @click="selectedProfile = null">×</button>
+          <button class="close-btn" @click="selectedProfile = null" aria-label="Close">×</button>
         </div>
         
         <div class="modal-body">
@@ -1895,7 +1895,8 @@ onUnmounted(() => {
   padding: 0;
 }
 
-.close-btn:hover {
+.close-btn:hover,
+.close-btn:focus-visible {
   color: #333;
 }
 

@@ -119,7 +119,7 @@
                 </span>
                 <span class="modal-create-time">{{ formatDate(selectedProject.created_at) }} {{ formatTime(selectedProject.created_at) }}</span>
               </div>
-              <button class="modal-close" @click="closeModal">×</button>
+              <button class="modal-close" @click="closeModal" aria-label="Close">×</button>
             </div>
 
             <!-- 弹窗内容 -->
@@ -1130,7 +1130,8 @@ onUnmounted(() => {
   border-radius: 6px;
 }
 
-.modal-close:hover {
+.modal-close:hover,
+.modal-close:focus-visible {
   background: #F3F4F6;
   color: #111827;
 }

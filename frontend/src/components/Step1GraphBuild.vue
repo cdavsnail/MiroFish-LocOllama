@@ -34,7 +34,7 @@
                   <span class="detail-type-badge">{{ selectedOntologyItem.itemType === 'entity' ? 'ENTITY' : 'RELATION' }}</span>
                   <span class="detail-name">{{ selectedOntologyItem.name }}</span>
                </div>
-               <button class="close-btn" @click="selectedOntologyItem = null">×</button>
+               <button class="close-btn" @click="selectedOntologyItem = null" aria-label="Close">×</button>
             </div>
             <div class="detail-body">
                <div class="detail-desc">{{ selectedOntologyItem.description }}</div>
@@ -470,7 +470,8 @@ watch(() => props.systemLogs.length, () => {
     line-height: 1;
 }
 
-.close-btn:hover {
+.close-btn:hover,
+.close-btn:focus-visible {
     color: #333;
 }
 
