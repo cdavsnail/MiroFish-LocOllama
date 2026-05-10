@@ -540,7 +540,7 @@
             </div>
             <span class="modal-profession">{{ selectedProfile.profession }}</span>
           </div>
-          <button class="close-btn" @click="selectedProfile = null">×</button>
+          <button class="close-btn" :aria-label="$t('common.close')" @click="selectedProfile = null">×</button>
         </div>
         
         <div class="modal-body">
