@@ -1,0 +1,3 @@
+## 2024-05-11 - Avoid N+1 queries by extending primary query SELECT fields
+**Learning:** In `backend/scripts/run_parallel_simulation.py`, the `_get_post_info` and `_get_comment_info` functions exhibited an N+1 query pattern. The primary query performed a `LEFT JOIN` on the `user` table to get `agent_id`, but then ran a secondary query `SELECT name, user_name FROM user WHERE user_id = ?` for every fetched row when the `agent_id` was not found in the cache. This is unnecessary.
+**Action:** Always inspect queries involving JOINs to see if all required fields can be fetched in the primary query. By simply adding `u.name` and `u.user_name` to the initial `SELECT` clause, we eliminate the need for the secondary query inside the loop, significantly improving performance.
