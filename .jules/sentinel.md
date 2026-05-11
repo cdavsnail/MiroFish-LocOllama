@@ -1,0 +1,4 @@
+## 2026-05-11 - [Fix Path Traversal in File Downloads]
+**Vulnerability:** The application was using `flask.send_file` with dynamically constructed or tainted paths (e.g., `temp_path` and `md_path`) which can lead to path traversal vulnerabilities, allowing an attacker to access arbitrary files on the system.
+**Learning:** `flask.send_file` is unsafe when the file path includes user-provided input or dynamic segments that might contain `../`. To securely serve temporary or dynamically generated files, the directory must be fixed and trusted, and only the filename should be dynamic.
+**Prevention:** Always use `flask.send_from_directory(directory, filename)` instead of `flask.send_file` to prevent path traversal vulnerabilities. Ensure the `directory` argument is a fixed, trusted path (like `tempfile.gettempdir()`, `ReportManager.REPORTS_DIR`, or `SIMULATION_DATA_DIR`) and the `filename` argument is sanitized, utilizing `os.path.basename` where necessary.
