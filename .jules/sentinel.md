@@ -1,0 +1,4 @@
+## 2024-05-24 - Replace send_file with send_from_directory for secure file downloads
+**Vulnerability:** The Flask application used `send_file` with dynamically constructed paths to serve file downloads (e.g., reports, simulation configs, and scripts). This pattern is susceptible to path traversal vulnerabilities if any part of the path is influenced by user input, potentially allowing an attacker to download arbitrary files from the server.
+**Learning:** `send_file` should be avoided when serving files dynamically. The `os.path.dirname(path)` extraction is an anti-pattern and provides security theater, not actual security.
+**Prevention:** Always use `send_from_directory(directory, filename)` to serve files in Flask. Ensure the `directory` argument is a trusted, fixed base path (like `tempfile.gettempdir()` or a pre-configured storage directory) and pass the `filename` separately.
