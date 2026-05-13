@@ -1,0 +1,4 @@
+## 2025-02-27 - Path Traversal in File Downloads
+**Vulnerability:** The Flask backend used `send_file` directly with user-provided or dynamically generated paths (e.g., in `backend/app/api/report.py` and `backend/app/api/simulation.py`). This could potentially allow an attacker to traverse directories and download arbitrary files from the server.
+**Learning:** Even when serving internal application files (like generated markdown reports or simulation scripts), passing raw paths to `send_file` introduces security risks. Path traversal protections must be explicit. Using `os.path.dirname(path)` as a base for `send_from_directory` provides false security ("security theater") if the path itself is tainted.
+**Prevention:** Always use `send_from_directory` with a hardcoded, trusted base directory (e.g., `Config.UPLOAD_FOLDER` or `tempfile.gettempdir()`) and pass only the `os.path.basename` or a fixed filename as the second argument.

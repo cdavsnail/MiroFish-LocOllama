@@ -1,0 +1,16 @@
+                f.write(report.markdown_content)
+                temp_path = f.name
+
+            return send_file(
+                temp_path,
+                as_attachment=True,
+                download_name=f"{report_id}.md"
+            )
+
+        return send_file(
+            md_path,
+            as_attachment=True,
+            download_name=f"{report_id}.md"
+        )
+
+    except Exception as e:

@@ -1,0 +1,41 @@
+            "sources": [tc.get("parameters", {}).get("query", "") for tc in tool_calls_made]
+        }
+
+
+class ReportManager:
+    """
+    报告管理器
+
+    负责报告的持久化存储和检索
+
+    文件结构（分章节输出）：
+    reports/
+      {report_id}/
+        meta.json          - 报告元信息和状态
+        outline.json       - 报告大纲
+        progress.json      - 生成进度
+        section_01.md      - 第1章节
+        section_02.md      - 第2章节
+        ...
+        full_report.md     - 完整报告
+    """
+
+    # 报告存储目录
+    REPORTS_DIR = os.path.join(Config.UPLOAD_FOLDER, 'reports')
+
+    @classmethod
+    def _ensure_reports_dir(cls):
+        """确保报告根目录存在"""
+        os.makedirs(cls.REPORTS_DIR, exist_ok=True)
+
+    @classmethod
+    def _get_report_folder(cls, report_id: str) -> str:
+        """获取报告文件夹路径"""
+        return os.path.join(cls.REPORTS_DIR, report_id)
+
+    @classmethod
+    def _ensure_report_folder(cls, report_id: str) -> str:
+        """确保报告文件夹存在并返回路径"""
+        folder = cls._get_report_folder(report_id)
+        os.makedirs(folder, exist_ok=True)
+        return folder

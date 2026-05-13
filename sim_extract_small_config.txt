@@ -1,0 +1,16 @@
+        config_path = os.path.join(sim_dir, "simulation_config.json")
+
+        if not os.path.exists(config_path):
+            return jsonify({
+                "success": False,
+                "error": t('api.configFileNotFound')
+            }), 404
+
+        return send_file(
+            config_path,
+            as_attachment=True,
+            download_name="simulation_config.json"
+        )
+
+    except Exception as e:
+        logger.error(f"下载配置失败: {str(e)}")
