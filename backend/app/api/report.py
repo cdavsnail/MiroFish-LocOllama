@@ -22,6 +22,77 @@ logger = get_logger('mirofish.api.report')
 
 # ============== 报告生成接口 ==============
 
+def _validate_generate_request_data(data):
+    """Validate request data and extract simulation_id and force_regenerate."""
+    simulation_id = data.get('simulation_id')
+    if not simulation_id:
+        return None, False, jsonify({
+            "success": False,
+            "error": t('api.requireSimulationId')
+        }), 400
+
+    force_regenerate = data.get('force_regenerate', False)
+    return simulation_id, force_regenerate, None, None
+
+def _validate_simulation_and_report(simulation_id, force_regenerate):
+    """Validate simulation exists and check for existing completed reports."""
+    from ..services.simulation_manager import SimulationManager
+    from ..services.report_agent import ReportManager, ReportStatus
+
+    manager = SimulationManager()
+    state = manager.get_simulation(simulation_id)
+
+    if not state:
+        return None, jsonify({
+            "success": False,
+            "error": t('api.simulationNotFound', id=simulation_id)
+        }), 404
+
+    if not force_regenerate:
+        existing_report = ReportManager.get_report_by_simulation(simulation_id)
+        if existing_report and existing_report.status == ReportStatus.COMPLETED:
+            return None, jsonify({
+                "success": True,
+                "data": {
+                    "simulation_id": simulation_id,
+                    "report_id": existing_report.report_id,
+                    "status": "completed",
+                    "message": t('api.reportAlreadyExists'),
+                    "already_generated": True
+                }
+            }), 200
+
+    return state, None, None
+
+def _validate_project_and_requirements(state):
+    """Validate project exists and has required graph_id and simulation requirements."""
+    from ..models.project import ProjectManager
+
+    project = ProjectManager.get_project(state.project_id)
+    if not project:
+        return None, None, jsonify({
+            "success": False,
+            "error": t('api.projectNotFound', id=state.project_id)
+        }), 404
+
+    graph_id = state.graph_id or project.graph_id
+    if not graph_id:
+        return None, None, jsonify({
+            "success": False,
+            "error": t('api.missingGraphIdEnsure')
+        }), 400
+
+    simulation_requirement = project.simulation_requirement
+    if not simulation_requirement:
+        return None, None, jsonify({
+            "success": False,
+            "error": t('api.missingSimRequirement')
+        }), 400
+
+    return graph_id, simulation_requirement, None, None
+
+
+
 @report_bp.route('/generate', methods=['POST'])
 def generate_report():
     """
@@ -50,61 +121,19 @@ def generate_report():
     try:
         data = request.get_json() or {}
         
-        simulation_id = data.get('simulation_id')
-        if not simulation_id:
-            return jsonify({
-                "success": False,
-                "error": t('api.requireSimulationId')
-            }), 400
+        simulation_id, force_regenerate, err_response, err_code = _validate_generate_request_data(data)
+        if err_response:
+            return err_response, err_code
 
-        force_regenerate = data.get('force_regenerate', False)
-        
-        # 获取模拟信息
-        manager = SimulationManager()
-        state = manager.get_simulation(simulation_id)
-        
-        if not state:
-            return jsonify({
-                "success": False,
-                "error": t('api.simulationNotFound', id=simulation_id)
-            }), 404
+        state, err_response, err_code = _validate_simulation_and_report(simulation_id, force_regenerate)
+        if err_response:
+            if err_code == 200:
+                return err_response
+            return err_response, err_code
 
-        # 检查是否已有报告
-        if not force_regenerate:
-            existing_report = ReportManager.get_report_by_simulation(simulation_id)
-            if existing_report and existing_report.status == ReportStatus.COMPLETED:
-                return jsonify({
-                    "success": True,
-                    "data": {
-                        "simulation_id": simulation_id,
-                        "report_id": existing_report.report_id,
-                        "status": "completed",
-                        "message": t('api.reportAlreadyExists'),
-                        "already_generated": True
-                    }
-                })
-        
-        # 获取项目信息
-        project = ProjectManager.get_project(state.project_id)
-        if not project:
-            return jsonify({
-                "success": False,
-                "error": t('api.projectNotFound', id=state.project_id)
-            }), 404
-        
-        graph_id = state.graph_id or project.graph_id
-        if not graph_id:
-            return jsonify({
-                "success": False,
-                "error": t('api.missingGraphIdEnsure')
-            }), 400
-        
-        simulation_requirement = project.simulation_requirement
-        if not simulation_requirement:
-            return jsonify({
-                "success": False,
-                "error": t('api.missingSimRequirement')
-            }), 400
+        graph_id, simulation_requirement, err_response, err_code = _validate_project_and_requirements(state)
+        if err_response:
+            return err_response, err_code
         
         # 提前生成 report_id，以便立即返回给前端
         import uuid
