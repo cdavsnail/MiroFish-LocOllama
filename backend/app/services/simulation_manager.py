@@ -6,17 +6,18 @@ OASIS模拟管理器
 
 import os
 import json
-import shutil
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+import threading
+from ..models.task import TaskManager, TaskStatus
+from ..utils.locale import set_locale
 
-from ..config import Config
 from ..utils.logger import get_logger
-from .zep_entity_reader import ZepEntityReader, FilteredEntities
-from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
-from .simulation_config_generator import SimulationConfigGenerator, SimulationParameters
+from .zep_entity_reader import ZepEntityReader
+from .oasis_profile_generator import OasisProfileGenerator
+from .simulation_config_generator import SimulationConfigGenerator
 from ..utils.locale import t
 
 logger = get_logger('mirofish.simulation')
@@ -227,6 +228,125 @@ class SimulationManager:
         
         return state
     
+
+    def start_prepare_task(
+        self,
+        simulation_id: str,
+        task_id: str,
+        simulation_requirement: str,
+        document_text: str,
+        defined_entity_types: Optional[List[str]] = None,
+        use_llm_for_profiles: bool = True,
+        parallel_profile_count: int = 5,
+        current_locale: str = "en"
+    ):
+        task_manager = TaskManager()
+
+        def run_prepare():
+            set_locale(current_locale)
+            try:
+                task_manager.update_task(
+                    task_id,
+                    status=TaskStatus.PROCESSING,
+                    progress=0,
+                    message=t('progress.startPreparingEnv')
+                )
+
+                # 存储阶段进度详情
+                stage_details = {}
+
+                def progress_callback(stage, progress, message, **kwargs):
+                    # 计算总进度
+                    stage_weights = {
+                        "reading": (0, 20),           # 0-20%
+                        "generating_profiles": (20, 70),  # 20-70%
+                        "generating_config": (70, 90),    # 70-90%
+                        "copying_scripts": (90, 100)       # 90-100%
+                    }
+
+                    start, end = stage_weights.get(stage, (0, 100))
+                    current_progress = int(start + (end - start) * progress / 100)
+
+                    # 构建详细进度信息
+                    stage_names = {
+                        "reading": t('progress.readingGraphEntities'),
+                        "generating_profiles": t('progress.generatingProfiles'),
+                        "generating_config": t('progress.generatingSimConfig'),
+                        "copying_scripts": t('progress.preparingScripts')
+                    }
+
+                    stage_index = list(stage_weights.keys()).index(stage) + 1 if stage in stage_weights else 1
+                    total_stages = len(stage_weights)
+
+                    # 更新阶段详情
+                    stage_details[stage] = {
+                        "stage_name": stage_names.get(stage, stage),
+                        "stage_progress": progress,
+                        "current": kwargs.get("current", 0),
+                        "total": kwargs.get("total", 0),
+                        "item_name": kwargs.get("item_name", "")
+                    }
+
+                    # 构建详细进度信息
+                    detail = stage_details[stage]
+                    progress_detail_data = {
+                        "current_stage": stage,
+                        "current_stage_name": stage_names.get(stage, stage),
+                        "stage_index": stage_index,
+                        "total_stages": total_stages,
+                        "stage_progress": progress,
+                        "current_item": detail["current"],
+                        "total_items": detail["total"],
+                        "item_description": message
+                    }
+
+                    # 构建简洁消息
+                    if detail["total"] > 0:
+                        detailed_message = (
+                            f"[{stage_index}/{total_stages}] {stage_names.get(stage, stage)}: "
+                            f"{detail['current']}/{detail['total']} - {message}"
+                        )
+                    else:
+                        detailed_message = f"[{stage_index}/{total_stages}] {stage_names.get(stage, stage)}: {message}"
+
+                    task_manager.update_task(
+                        task_id,
+                        progress=current_progress,
+                        message=detailed_message,
+                        progress_detail=progress_detail_data
+                    )
+
+                result_state = self.prepare_simulation(
+                    simulation_id=simulation_id,
+                    simulation_requirement=simulation_requirement,
+                    document_text=document_text,
+                    defined_entity_types=defined_entity_types,
+                    use_llm_for_profiles=use_llm_for_profiles,
+                    progress_callback=progress_callback,
+                    parallel_profile_count=parallel_profile_count
+                )
+
+                # 任务完成
+                task_manager.complete_task(
+                    task_id,
+                    result=result_state.to_simple_dict()
+                )
+
+            except Exception as e:
+                logger.error(f"准备模拟失败: {str(e)}")
+                task_manager.fail_task(task_id, str(e))
+
+                # 更新模拟状态为失败
+                state = self.get_simulation(simulation_id)
+                if state:
+                    state.status = SimulationStatus.FAILED
+                    state.error = str(e)
+                    self._save_simulation_state(state)
+
+        # 启动后台线程
+        thread = threading.Thread(target=run_prepare, daemon=True)
+        thread.start()
+
     def prepare_simulation(
         self,
         simulation_id: str,
