@@ -68,11 +68,9 @@ import argparse
 import asyncio
 import json
 import logging
-import multiprocessing
 import random
 import signal
 import sqlite3
-import warnings
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -682,55 +680,119 @@ def fetch_new_actions_from_db(
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # 使用 rowid 来追踪已处理的记录（rowid 是 SQLite 的内置自增字段）
-        # 这样可以避免 created_at 格式差异问题（Twitter 用整数，Reddit 用日期时间字符串）
-        cursor.execute("""
-            SELECT rowid, user_id, action, info
+        query = """
+        WITH trace_parsed AS (
+            SELECT
+                rowid, user_id as trace_user_id, action, info,
+                CASE WHEN json_valid(info) THEN json_extract(info, '$.post_id') ELSE NULL END as arg_post_id,
+                CASE WHEN json_valid(info) THEN json_extract(info, '$.new_post_id') ELSE NULL END as arg_new_post_id,
+                CASE WHEN json_valid(info) THEN json_extract(info, '$.quoted_id') ELSE NULL END as arg_quoted_id,
+                CASE WHEN json_valid(info) THEN json_extract(info, '$.follow_id') ELSE NULL END as arg_follow_id,
+                CASE WHEN json_valid(info) THEN coalesce(json_extract(info, '$.target_id'), json_extract(info, '$.user_id')) ELSE NULL END as arg_mute_id,
+                CASE WHEN json_valid(info) THEN json_extract(info, '$.comment_id') ELSE NULL END as arg_comment_id
             FROM trace
-            WHERE rowid > ?
-            ORDER BY rowid ASC
-        """, (last_rowid,))
+            WHERE rowid > ? AND action NOT IN ('refresh', 'sign_up')
+        )
+        SELECT
+            t.rowid, t.trace_user_id, t.action, t.info,
+
+            p1.content as p1_content, u1.agent_id as u1_agent_id, u1.name as u1_name, u1.user_name as u1_user_name,
+
+            p_orig.content as p2_content, u2.agent_id as u2_agent_id, u2.name as u2_name, u2.user_name as u2_user_name,
+
+            p3.content as p3_content, u3.agent_id as u3_agent_id, u3.name as u3_name, u3.user_name as u3_user_name,
+
+            p_new.quote_content as p_new_quote_content,
+
+            u4.agent_id as u4_agent_id, u4.name as u4_name, u4.user_name as u4_user_name,
+
+            u5.agent_id as u5_agent_id, u5.name as u5_name, u5.user_name as u5_user_name,
+
+            c1.content as c1_content, u6.agent_id as u6_agent_id, u6.name as u6_name, u6.user_name as u6_user_name
         
-        for rowid, user_id, action, info_json in cursor.fetchall():
-            # 更新最大 rowid
+        FROM trace_parsed t
+
+        LEFT JOIN post p1 ON t.arg_post_id = p1.post_id AND t.action IN ('like_post', 'dislike_post', 'create_comment', 'LIKE_POST', 'DISLIKE_POST', 'CREATE_COMMENT')
+        LEFT JOIN user u1 ON p1.user_id = u1.user_id
+
+        LEFT JOIN post p_repost ON t.arg_new_post_id = p_repost.post_id AND t.action IN ('repost', 'REPOST')
+        LEFT JOIN post p_orig ON p_repost.original_post_id = p_orig.post_id
+        LEFT JOIN user u2 ON p_orig.user_id = u2.user_id
+
+        LEFT JOIN post p3 ON t.arg_quoted_id = p3.post_id AND t.action IN ('quote_post', 'QUOTE_POST')
+        LEFT JOIN user u3 ON p3.user_id = u3.user_id
+
+        LEFT JOIN post p_new ON t.arg_new_post_id = p_new.post_id AND t.action IN ('quote_post', 'QUOTE_POST')
+
+        LEFT JOIN follow f ON t.arg_follow_id = f.follow_id AND t.action IN ('follow', 'FOLLOW')
+        LEFT JOIN user u4 ON f.followee_id = u4.user_id
+
+        LEFT JOIN user u5 ON t.arg_mute_id = u5.user_id AND t.action IN ('mute', 'MUTE')
+
+        LEFT JOIN comment c1 ON t.arg_comment_id = c1.comment_id AND t.action IN ('like_comment', 'dislike_comment', 'LIKE_COMMENT', 'DISLIKE_COMMENT')
+        LEFT JOIN user u6 ON c1.user_id = u6.user_id
+
+        ORDER BY t.rowid ASC
+        """
+
+        cursor.execute(query, (last_rowid,))
+
+        def _get_name(agent_id, name, user_name):
+            if agent_id is not None and agent_id in agent_names:
+                return agent_names[agent_id]
+            return name or user_name or ''
+
+        for row in cursor.fetchall():
+            rowid = row[0]
+            user_id = row[1]
+            action = row[2]
+            info_json = row[3]
+            
             new_last_rowid = rowid
             
-            # 过滤非核心动作
-            if action in FILTERED_ACTIONS:
-                continue
-            
-            # 解析动作参数
             try:
                 action_args = json.loads(info_json) if info_json else {}
             except json.JSONDecodeError:
                 action_args = {}
-            
-            # 精简 action_args，只保留关键字段（保留完整内容，不截断）
+
             simplified_args = {}
-            if 'content' in action_args:
-                simplified_args['content'] = action_args['content']
-            if 'post_id' in action_args:
-                simplified_args['post_id'] = action_args['post_id']
-            if 'comment_id' in action_args:
-                simplified_args['comment_id'] = action_args['comment_id']
-            if 'quoted_id' in action_args:
-                simplified_args['quoted_id'] = action_args['quoted_id']
-            if 'new_post_id' in action_args:
-                simplified_args['new_post_id'] = action_args['new_post_id']
-            if 'follow_id' in action_args:
-                simplified_args['follow_id'] = action_args['follow_id']
-            if 'query' in action_args:
-                simplified_args['query'] = action_args['query']
-            if 'like_id' in action_args:
-                simplified_args['like_id'] = action_args['like_id']
-            if 'dislike_id' in action_args:
-                simplified_args['dislike_id'] = action_args['dislike_id']
-            
-            # 转换动作类型名称
+            for key in ['content', 'post_id', 'comment_id', 'quoted_id', 'new_post_id', 'follow_id', 'query', 'like_id', 'dislike_id']:
+                if key in action_args:
+                    simplified_args[key] = action_args[key]
+
             action_type = ACTION_TYPE_MAP.get(action, action.upper())
             
-            # 补充上下文信息（帖子内容、用户名等）
-            _enrich_action_context(cursor, action_type, simplified_args, agent_names)
+            if action_type in ('LIKE_POST', 'DISLIKE_POST', 'CREATE_COMMENT'):
+                if row[4] is not None:
+                    simplified_args['post_content'] = row[4]
+                    simplified_args['post_author_name'] = _get_name(row[5], row[6], row[7])
+
+            elif action_type == 'REPOST':
+                if row[8] is not None:
+                    simplified_args['original_content'] = row[8]
+                    simplified_args['original_author_name'] = _get_name(row[9], row[10], row[11])
+
+            elif action_type == 'QUOTE_POST':
+                if row[12] is not None:
+                    simplified_args['original_content'] = row[12]
+                    simplified_args['original_author_name'] = _get_name(row[13], row[14], row[15])
+                if row[16] is not None:
+                    simplified_args['quote_content'] = row[16]
+
+            elif action_type == 'FOLLOW':
+                name = _get_name(row[17], row[18], row[19])
+                if name:
+                    simplified_args['target_user_name'] = name
+
+            elif action_type == 'MUTE':
+                name = _get_name(row[20], row[21], row[22])
+                if name:
+                    simplified_args['target_user_name'] = name
+
+            elif action_type in ('LIKE_COMMENT', 'DISLIKE_COMMENT'):
+                if row[23] is not None:
+                    simplified_args['comment_content'] = row[23]
+                    simplified_args['comment_author_name'] = _get_name(row[24], row[25], row[26])
             
             actions.append({
                 'agent_id': user_id,
@@ -1554,7 +1616,7 @@ async def main():
     minutes_per_round = time_config.get('minutes_per_round', 30)
     config_total_rounds = (total_hours * 60) // minutes_per_round
     
-    log_manager.info(f"模拟参数:")
+    log_manager.info("模拟参数:")
     log_manager.info(f"  - 总模拟时长: {total_hours}小时")
     log_manager.info(f"  - 每轮时间: {minutes_per_round}分钟")
     log_manager.info(f"  - 配置总轮数: {config_total_rounds}")
@@ -1565,9 +1627,9 @@ async def main():
     log_manager.info(f"  - Agent数量: {len(config.get('agent_configs', []))}")
     
     log_manager.info("日志结构:")
-    log_manager.info(f"  - 主日志: simulation.log")
-    log_manager.info(f"  - Twitter动作: twitter/actions.jsonl")
-    log_manager.info(f"  - Reddit动作: reddit/actions.jsonl")
+    log_manager.info("  - 主日志: simulation.log")
+    log_manager.info("  - Twitter动作: twitter/actions.jsonl")
+    log_manager.info("  - Reddit动作: reddit/actions.jsonl")
     log_manager.info("=" * 60)
     
     start_time = datetime.now()
@@ -1642,8 +1704,8 @@ async def main():
         log_manager.info("[Reddit] 环境已关闭")
     
     log_manager.info("=" * 60)
-    log_manager.info(f"全部完成!")
-    log_manager.info(f"日志文件:")
+    log_manager.info("全部完成!")
+    log_manager.info("日志文件:")
     log_manager.info(f"  - {os.path.join(simulation_dir, 'simulation.log')}")
     log_manager.info(f"  - {os.path.join(simulation_dir, 'twitter', 'actions.jsonl')}")
     log_manager.info(f"  - {os.path.join(simulation_dir, 'reddit', 'actions.jsonl')}")

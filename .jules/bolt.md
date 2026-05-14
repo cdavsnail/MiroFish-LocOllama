@@ -1,0 +1,3 @@
+## 2024-05-14 - Optimize N+1 Query in Simulation Data Fetching
+**Learning:** Found an N+1 query problem in `fetch_new_actions_from_db` inside `run_parallel_simulation.py` where iterating over JSON traces required separate SQLite SELECT queries to fetch nested entities like original post text or user references.
+**Action:** Replaced iterative Python-driven database access with an efficient SQLite query using `CASE WHEN json_valid(info) THEN json_extract(info, '$.key') ELSE NULL END` inside a Common Table Expression (CTE) and `LEFT JOIN`s to fetch all related context in one pass, avoiding N+1 loops.
