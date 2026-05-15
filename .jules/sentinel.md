@@ -1,0 +1,4 @@
+## 2025-02-15 - [Path Traversal in Flask Downloads]
+**Vulnerability:** The application used `send_file` with user-controlled or dynamically generated paths (like `report_id` or `script_name`) in download endpoints. This creates a risk of Path Traversal, where an attacker could use `../` sequences to download arbitrary files from the server.
+**Learning:** `send_file` in Flask does not adequately sanitize or restrict the directory of the requested file when the path is not strictly controlled.
+**Prevention:** Always use `send_from_directory` for serving files dynamically. This function enforces that the file being served must reside within the specified base directory, effectively mitigating path traversal attacks. When using temp files, pass `tempfile.gettempdir()` as the base directory and use `os.path.basename()` to extract only the filename.
